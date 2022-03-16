@@ -1,72 +1,14 @@
-#include <TeensyStep.h>
-#include <ezButton.h>
-//#define ENCODER_OPTIMIZE_INTERRUPTS
-#include <Encoder.h>
+#include "Main.h"
 
-#include <ezButton.h>
-
-// Include the LiquidCrystal_I2C
-#include <Wire.h>
-#include <hd44780.h>  // main hd44780 header
-#include <hd44780ioClass/hd44780_I2Cexp.h>
-
-#include "Config.h"
-
-//Control encoder
 Encoder controlEncoder(clkPin, dtPin);
-Encoder spindleEncoder(chAPin, chBPin);
-long controlEncPos = 0;
-bool controlEncNewPos = false;
-//True for clockwise, false for ccw
-bool controlEncDirection = true;
+ezButton modeButton(clkPin);
+QuadDecode<1> spindleEncoder;
 
-//Hall Effect Sensor Settings
-bool hall = false; //Are we using hall effect (True) or quadrature encoder (false)
-int prevHallState = 0;
-int currentHallState = 0;
-
-//Spindle Encoder TimeKeepers
-long chALastRead;
-long rpmLastRead = 0;
-//Spindle RPMs
-double chARPM;
-double lastRPM;
-//Used for stepper calcs
-unsigned long lastSpindlePosition;
-unsigned long spindlePosition;
-
-bool printOUT = false;
-//Button declarations
-ezButton modeButton(modePin);
-
-
-// ----- MODE DECLERATIONS -----
-
-enum FeedMode {
-  feed_rate = 0,
-  feed_ratio = 1,
-  positioning = 2
-};
-//LCD Setup
-FeedMode currentMode = feed_rate;
-int feedRatePercentage = 0;
-int feedRatio = 0;
-int pitchCounter = 0;
-double pitches[11] = { .4, .45, .5, .7, .8, 1.0, 1.25, 1.5, 1.75, 2, 2.5 };
-hd44780_I2Cexp lcd(0x27);
-unsigned long rpmUpdateCounter = 0;
-unsigned long rpmUpdateDelay = 700;
 // Encoder Setup
-// Create a new instance of the AccelStepper class:
+// Create a new instance of the AccelSteppe
 RotateControl stepperController;
 StepControl positionController;
 Stepper stepper = Stepper(stepPin, dirPin);
-//Lathe Functions
-//Spindle Ratio is the gear ratio between stepper and the lead screw.
-//Ratio control
-double spindleRatio = 2;
-double feedRatioControl = 0;
-double feedRateControl = 0;
 
 void setup() {
   // Set the maximum speed and acceleration:
@@ -76,26 +18,17 @@ void setup() {
   //Stepper pin modes
   pinMode(dirPin, OUTPUT);
   pinMode(stepPin, OUTPUT);
-
+  initHardware();
+  currentMode = feed_rate;
   //attachInterrupt(digitalPinToInterrupt(chBPin), checkPosition, CHANGE);
   //Buttons pin modes
   pinMode(modePin, INPUT_PULLUP);
   modeButton.setDebounceTime(debounceDelay);
+
+  spindleEncoder.setup();
+  spindleEncoder.start();
   
-  //LCD
-  lcd.begin(20, 4);
-  //Serial.begin(115200);
-  //Serial.println("Hi");
-  lcd.clear();
-  lcd.setCursor(0, 1);
-  lcd.print("RPM: ");
-  lcd.print((int)chARPM);
-  lcd.home();
-  lcd.print("Feed  ");
-  lcd.setCursor(0, 2);
-  lcd.print("mm/s: ");
-  lcd.setCursor(6, 2);
-  lcd.print("0");
+    
 
   //Position
   spindlePosition = 0;
@@ -104,7 +37,7 @@ void setup() {
 }
 
 void loop() {
-    spindlePosition = spindleEncoder.read();
+    spindlePosition = spindleEncoder.calcPosn();
     int deltaSpindlePosition = ( spindlePosition - lastSpindlePosition);
     if (deltaSpindlePosition > 0) {
       calcRPM();
@@ -121,8 +54,8 @@ void loop() {
   //Handle buttons
   modeControl();
   //Check control encoder direction
-  long newPos = controlEncoder.read();
-  int deltaPos = (newPos - controlEncPos);
+  u_int32_t newPos = controlEncoder.read();
+  u_int16_t deltaPos = (newPos - controlEncPos);
   controlEncNewPos = newPos != controlEncPos;
   controlEncPos = newPos;
 
@@ -141,10 +74,7 @@ void loop() {
         } else {
           feedRatio += deltaPos;
         }
-        lcd.setCursor(6, 2);
-        feedRatioControl = feedRatio / 100.0;
-        lcd.print((double)feedRatioControl);
-        lcd.print("  mm/rev ");
+        
         //LEAD SCREW IS 16 TPI OR 1.588mm
         //Only necessary for stepper speed control, not for positional mode
 //        speedRatio = chARPM / feedRatio.
@@ -161,26 +91,13 @@ void loop() {
           feedRatePercentage = 0;
         } else {
           feedRatePercentage += deltaPos;
-        }
-        lcd.setCursor(6, 2);
-        feedRateControl = feedRatePercentage / 1600.0;
-        //mm/s takes 1mm pitch lead screw, which means 1 rpm = 1mm. 
-        //1rpm = 1/60 mm/s
-        //Stepper to leadscrew ratio = .5
-        double displayFeedRate = feedRateControl*maxStepperRPM/120;
-        //displayFeedRate = map(displayFeedRate,0, 100, 0, 600);
-        lcd.print((double)displayFeedRate);
-        lcd.print(" ");
-        
+        }                
         stepperController.overrideSpeed(feedRateControl);
     }
- 
-      
-      //Positioning 
-     
-    }
+    updateRPM(chARPM, currentMode, spindlePosition, feedRateControl);
+
+  }
   
-  displayProcess();
 
 }
 void calcRPM() {
@@ -202,9 +119,6 @@ int avgArray(double avgArray[], int maxCount) {
   return sum / maxCount;
 }
 
-void displayProcess() {
-  
-}
 
 void modeControl(){
     modeButton.loop();
@@ -217,18 +131,13 @@ void modeControl(){
       //Currently in feed, going to feed ratio
        case positioning:
         currentMode = feed_rate;
-        lcd.home();
-        lcd.print("Feed       ");
-        lcd.setCursor(0, 2);
-        lcd.print("mm/s: 0       ");
+        setupFeedRate();
+        
         stepperController.rotateAsync(stepper);
       break;
       case feed_rate:
       currentMode = feed_ratio;
-      lcd.home();
-      lcd.print("Feed Ratio ");
-      lcd.setCursor(0, 2);
-      lcd.print("Ratio:            ");
+      
       //Stopping motor in order to have position control take over
       stepperController.stopAsync();
       stepper.setPosition(0);
@@ -236,14 +145,7 @@ void modeControl(){
       //Currently in feed ratio, going to positioning
       case feed_ratio:
       currentMode = positioning;
-      lcd.home();
-      lcd.print("Positioning  ");
-      lcd.setCursor(0, 2);
-      lcd.print("Angle:");
-      double encoderRatio =  (spindlePosition % encoderPulsesPerRev);
-      lcd.print( (double) encoderRatio);
-      lcd.setCursor(0,4);
-      lcd.print("     ");
+      
       //Stop stepper
       stepperController.overrideSpeed(0);
       break;
@@ -255,3 +157,4 @@ void modeControl(){
     }
   }
 }
+
