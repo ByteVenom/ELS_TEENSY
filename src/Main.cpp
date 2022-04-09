@@ -1,14 +1,63 @@
-#include "Main.h"
+#include <Arduino.h>
+#include <TeensyStep.h>
+#include <ezButton.h>
+#include <TeensyTimerTool.h>
+#include <stdint.h>
 
-Encoder controlEncoder(clkPin, dtPin);
-ezButton modeButton(clkPin);
+
+#include "Encoder.h"
+#include "QuadDecode_def.h"
+#include "Config.h"
+#include "ControlPanel.h"
+
+#include <SerialWombat.h>
+
+//Control Encoder
+uint16_t controlEncPos;
+//Hall Effect Sensor Settings
+bool hall = false; //Are we using hall effect (True) or quadrature encoder (false)
+int prevHallState = 0;
+int currentHallState = 0;
+//Spindle Encoder TimeKeepers
+long chALastRead;
+long rpmLastRead = 0;
+//Spindle RPMs
+short RPMUpdateFreq = 10;
+double RPM;
+double lastRPM;
+//Used for stepper calcs
+unsigned long lastSpindlePosition;
+unsigned long spindlePosition;
+bool printOUT = false;
+//LCD Setup
+int feedRatePercentage = 0;
+int feedRatio = 0;
+int pitchCounter = 0;
+unsigned long rpmUpdateCounter = 0;
+unsigned long rpmUpdateDelay = 700;
+//Lathe Functions
+//Spindle Ratio is the gear ratio between stepper and the lead screw.
+//Ratio control
+double feedRatioControl = 0;
+double feedRateControl = 0;
+
+char currentMode;
+
 QuadDecode<1> spindleEncoder;
-
+TeensyTimerTool::PeriodicTimer rpmCalcTimer;
+ControlPanel controlPanel;
 // Encoder Setup
 // Create a new instance of the AccelSteppe
 RotateControl stepperController;
 StepControl positionController;
-Stepper stepper = Stepper(stepPin, dirPin);
+Stepper stepper = Stepper(stepPulsePin, directionPin);
+
+SerialWombat controlPanelIOExpander;
+SerialWombatDebouncedInput modeButton(controlPanelIOExpander);
+SerialWombatQuadEnc controlEncoder(controlPanelIOExpander);
+
+
+void calcRPM();
 
 void setup() {
   // Set the maximum speed and acceleration:
@@ -16,54 +65,55 @@ void setup() {
   stepperController.rotateAsync(stepper);
   stepperController.overrideSpeed(0);
   //Stepper pin modes
-  pinMode(dirPin, OUTPUT);
-  pinMode(stepPin, OUTPUT);
-  initHardware();
-  currentMode = feed_rate;
+  pinMode(directionPin, OUTPUT);
+  pinMode(stepPulsePin, OUTPUT);
+  controlPanel.initHardware();
+  rpmCalcTimer.begin(calcRPM, 250'000);
+  currentMode = 'f';
   //attachInterrupt(digitalPinToInterrupt(chBPin), checkPosition, CHANGE);
   //Buttons pin modes
   pinMode(modePin, INPUT_PULLUP);
-  modeButton.setDebounceTime(debounceDelay);
-
+  
   spindleEncoder.setup();
   spindleEncoder.start();
-  
-    
-
   //Position
   spindlePosition = 0;
   lastSpindlePosition = 0;
-  currentMode = feed_rate;
+
+   
+  Wire.begin();
+   controlPanelIOExpander.begin(0x6C);
+  controlEncoder.begin(clkPin, dtPin,0,false, QE_ONHIGH_POLL);
+  modeButton.begin(modePin);
 }
 
 void loop() {
     spindlePosition = spindleEncoder.calcPosn();
-    int deltaSpindlePosition = ( spindlePosition - lastSpindlePosition);
+    u_int16_t deltaSpindlePosition = ( spindlePosition - lastSpindlePosition);
     if (deltaSpindlePosition > 0) {
-      calcRPM();
       lastSpindlePosition = spindlePosition;
-      if(currentMode == feed_ratio){
+      if(currentMode == 't'){
         //lead screw moves 1.588mm per rotation
-        int target = feedRatioControl * 2 * ((deltaSpindlePosition/encoderPulsesPerRev) * stepsPerRev);
-          stepper.setTargetRel(target);
-          positionController.move(stepper);
+        u_int16_t target = feedRatioControl * 2 * ((deltaSpindlePosition/encoderPulsesPerRev) * stepsPerRev);
+        stepper.setTargetRel(target);
+        positionController.move(stepper);
       }
     }
  // }
 
   //Handle buttons
-  modeControl();
+  controlPanel.ModeControl(currentMode, modeButton.digitalRead());
   //Check control encoder direction
   u_int32_t newPos = controlEncoder.read();
-  u_int16_t deltaPos = (newPos - controlEncPos);
-  controlEncNewPos = newPos != controlEncPos;
+  u_int32_t deltaPos = (newPos - controlEncPos);
+  uint32_t controlEncNewPos = newPos != controlEncPos;
   controlEncPos = newPos;
 
   //MODE BUTTON
 
   if (controlEncNewPos) {
          //Feed ratio
-    if (currentMode == feed_ratio){
+    if (currentMode == 't'){
       //Serial.print("P");
         //Max ratio will be set to 2x
         //Stepper RPM will top out at 1200 RPM, so max spindle RPM for that would be 300 (because of 2/1 reduction)
@@ -74,16 +124,7 @@ void loop() {
         } else {
           feedRatio += deltaPos;
         }
-        
-        //LEAD SCREW IS 16 TPI OR 1.588mm
-        //Only necessary for stepper speed control, not for positional mode
-//        speedRatio = chARPM / feedRatio.
-        //Now we have a ratio of 1200 rpm, but we need 
-        //ratio of 1200 rpm = 1200 mm/m, but 20 mm/s, so 1:1 ratio. 
-        //To include rpm we need to limit stepper rpm to 1200. 
-        //Calculate a ratio between RPM and stepper RPM to achieve ratio
-        // if ratio > 1, set to 1200 display
-    }else if (currentMode == feed_rate){
+    }else if (currentMode == 'f'){
       //Feed rate
         if (feedRatePercentage + deltaPos > 1600) {
           feedRatePercentage = 1600;
@@ -94,21 +135,15 @@ void loop() {
         }                
         stepperController.overrideSpeed(feedRateControl);
     }
-    updateRPM(chARPM, currentMode, spindlePosition, feedRateControl);
+    controlPanel.updateRPM(RPM, currentMode, spindlePosition, feedRateControl);
 
   }
   
 
 }
 void calcRPM() {
-  unsigned long currentTime = micros();
-  unsigned long deltaTime = currentTime - rpmLastRead;
   int deltaPos = abs(spindlePosition - lastSpindlePosition);//
-  rpmLastRead = currentTime;
-  double invDeltaTime = (double)1 / deltaTime; //degrees per microsecond
-  invDeltaTime = invDeltaTime * (double) 60 * 1000 * 1000; //Degrees per minute
-  invDeltaTime = invDeltaTime / (double) encoderPulsesPerRev; //Revolutions per Minute (RPM) 
-  chARPM = invDeltaTime * deltaPos;
+  RPM =  deltaPos;
 }
 
 int avgArray(double avgArray[], int maxCount) {
@@ -120,41 +155,5 @@ int avgArray(double avgArray[], int maxCount) {
 }
 
 
-void modeControl(){
-    modeButton.loop();
-    
-      if (modeButton.isPressed()) {
-        Serial.println(currentMode);
-    // 0 == feed rate (mm/s), 1 == feed ratio (mm/rev), 2 == positioning, 3 == thread
-    switch(currentMode){
-      //THREAD CURRENTLY NOT SUPPORTED
-      //Currently in feed, going to feed ratio
-       case positioning:
-        currentMode = feed_rate;
-        setupFeedRate();
-        
-        stepperController.rotateAsync(stepper);
-      break;
-      case feed_rate:
-      currentMode = feed_ratio;
-      
-      //Stopping motor in order to have position control take over
-      stepperController.stopAsync();
-      stepper.setPosition(0);
-      break;
-      //Currently in feed ratio, going to positioning
-      case feed_ratio:
-      currentMode = positioning;
-      
-      //Stop stepper
-      stepperController.overrideSpeed(0);
-      break;
-      //Currently in positioning, going to feed
-     
-      default:
 
-        break;
-    }
-  }
-}
 

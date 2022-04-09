@@ -3,26 +3,29 @@
 
 // ----- Stepper Pins -----
 //Arduino
-//#define dirPin 4   //Update to 4 from 2
-//#define stepPin 5  //Update to 5 from 3
+//#define directionPin 4   //Update to 4 from 2
+//#define stepPulsePin 5  //Update to 5 from 3
 // Stepper  pins
-    #define dirPin 9
-    #define stepPin 10
+    #define directionPin 9
+    #define stepPulsePin 10
 
 // ----- Spindle Encoder Pins -----    
     //Teensy 3.2 TFM1 pins are 3,4.
 
-// ----- Control Encoder Pins -----
-    #define clkPin 16
-    #define dtPin 17
+// ----- Control Encoder Pins OF SERIAL WOMBAT -----
+    #define clkPin 2
+    #define dtPin 3
 
-// ----- Button Pins -----
-    #define modePin 6
+// ----- Button Pins OF SERIAL WOMBAT -----
+    #define modePin 1
 
 //Stepper constants
     #define stepsPerRev 400
     #define maxStepperRPM 1200
+
+//Encoder and RPM constants
     #define encoderPulsesPerRev 400
+    #define RPMCalcRateHz 10
 
 //Mechanical Constants
     //Pitch in mm on leadscrew

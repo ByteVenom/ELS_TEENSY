@@ -5,19 +5,24 @@
 #include <hd44780.h>  // main hd44780 header
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 #include "Config.h"
+#include <ezButton.h>
+#include <TeensyStep.h>
+
+//Feedmode is a char
+// 'f' feed 
+// 't' ratio
+// 'p' positioning
 
 #define displayUpdateDelay 500
-enum FeedMode {
-// ----- MODE DEC
-feed_rate = 0,
-feed_ratio = 1,
-positioning = 2
-};
 
+
+class ControlPanel{
+    
+public:
 
     void initHardware();
 
-    void updateRPM(int chARPM, FeedMode currentMode, int32_t spindlePosition, int32_t feedRateControl);
+    void updateRPM(int RPM, char currentMode, int32_t spindlePosition, int32_t feedRateControl);
 
     void setupFeedRate(void);
 
@@ -29,6 +34,10 @@ positioning = 2
 
     void setupPositioning(int32_t spindlePosition);
 
+    void ModeControl(char currentMode, bool buttonPressed);
+};
+
+    
 
 
 
