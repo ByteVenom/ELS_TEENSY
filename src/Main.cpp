@@ -23,10 +23,11 @@ long chALastRead;
 long rpmLastRead = 0;
 //Spindle RPMs
 short RPMUpdateFreq = 10;
-double RPM;
+volatile double RPM;
 double lastRPM;
 //Used for stepper calcs
 unsigned long lastSpindlePosition;
+u_int16_t deltaSpindlePosition;
 unsigned long spindlePosition;
 bool printOUT = false;
 //LCD Setup
@@ -34,7 +35,7 @@ int feedRatePercentage = 0;
 int feedRatio = 0;
 int pitchCounter = 0;
 unsigned long rpmUpdateCounter = 0;
-unsigned long rpmUpdateDelay = 700;
+unsigned long rpmUpdateDelay = (1.0/(RPMCalcRateHz))* 1000000;
 //Lathe Functions
 //Spindle Ratio is the gear ratio between stepper and the lead screw.
 //Ratio control
@@ -56,6 +57,8 @@ SerialWombat controlPanelIOExpander;
 SerialWombatDebouncedInput modeButton(controlPanelIOExpander);
 SerialWombatQuadEnc controlEncoder(controlPanelIOExpander);
 
+volatile bool calcRPMReady = false;
+uint16_t rpmCalc_spindeLastPos;
 
 void calcRPM();
 
@@ -67,12 +70,16 @@ void setup() {
   //Stepper pin modes
   pinMode(directionPin, OUTPUT);
   pinMode(stepPulsePin, OUTPUT);
+   Wire.begin();
+   controlPanelIOExpander.begin(0x6C);
+  modeButton.begin(modePin, 400, true, true);
+  controlEncoder.begin(clkPin, dtPin,5,true, QE_ONHIGH_POLL);
+  
   controlPanel.initHardware();
-  rpmCalcTimer.begin(calcRPM, 250'000);
+  rpmCalcTimer.begin(calcRPM, rpmUpdateDelay);
   currentMode = 'f';
-  //attachInterrupt(digitalPinToInterrupt(chBPin), checkPosition, CHANGE);
-  //Buttons pin modes
-  pinMode(modePin, INPUT_PULLUP);
+
+  
   
   spindleEncoder.setup();
   spindleEncoder.start();
@@ -81,15 +88,12 @@ void setup() {
   lastSpindlePosition = 0;
 
    
-  Wire.begin();
-   controlPanelIOExpander.begin(0x6C);
-  controlEncoder.begin(clkPin, dtPin,0,false, QE_ONHIGH_POLL);
-  modeButton.begin(modePin);
+ 
 }
 
 void loop() {
     spindlePosition = spindleEncoder.calcPosn();
-    u_int16_t deltaSpindlePosition = ( spindlePosition - lastSpindlePosition);
+     deltaSpindlePosition = ( spindlePosition - lastSpindlePosition);
     if (deltaSpindlePosition > 0) {
       lastSpindlePosition = spindlePosition;
       if(currentMode == 't'){
@@ -102,7 +106,10 @@ void loop() {
  // }
 
   //Handle buttons
-  controlPanel.ModeControl(currentMode, modeButton.digitalRead());
+  if(modeButton.digitalRead() && modeButton.readDurationInTrueState_mS() <= 5){
+    controlPanel.ModeControl(currentMode);
+  }
+  
   //Check control encoder direction
   u_int32_t newPos = controlEncoder.read();
   u_int32_t deltaPos = (newPos - controlEncPos);
@@ -117,13 +124,14 @@ void loop() {
       //Serial.print("P");
         //Max ratio will be set to 2x
         //Stepper RPM will top out at 1200 RPM, so max spindle RPM for that would be 300 (because of 2/1 reduction)
-        if (feedRatio + deltaPos > 200) {
-          feedRatio = 200;
+        if (feedRatio + deltaPos > 100) {
+          feedRatio = 100;
         } else if (feedRatio + deltaPos < 0) {
           feedRatio = 0;
         } else {
           feedRatio += deltaPos;
         }
+        
     }else if (currentMode == 'f'){
       //Feed rate
         if (feedRatePercentage + deltaPos > 1600) {
@@ -134,16 +142,29 @@ void loop() {
           feedRatePercentage += deltaPos;
         }                
         stepperController.overrideSpeed(feedRateControl);
+        controlPanel.updateFeedRate(feedRatePercentage);
     }
-    controlPanel.updateRPM(RPM, currentMode, spindlePosition, feedRateControl);
+    
 
+  }
+  if(calcRPMReady){
+    controlPanel.updateRPM(RPM, currentMode, spindlePosition, feedRateControl);
+    
+    calcRPMReady = false;
   }
   
 
 }
 void calcRPM() {
-  int deltaPos = abs(spindlePosition - lastSpindlePosition);//
-  RPM =  deltaPos;
+  int32_t rpmCalc_currentPosition = spindleEncoder.calcPosn();
+  int16_t rpmCalc_deltaPos = rpmCalc_currentPosition - rpmCalc_spindeLastPos;
+  float percRot = ((rpmCalc_deltaPos) /(float) encoderPulsesPerRev);
+  RPM =   percRot * RPMCalcRateHz * 60.00;
+  
+  rpmCalc_spindeLastPos = rpmCalc_currentPosition;
+  calcRPMReady = true;
+  
+  
 }
 
 int avgArray(double avgArray[], int maxCount) {

@@ -5,12 +5,11 @@ hd44780_I2Cexp lcd(0x27);
 
 
 void ControlPanel::updateRPM(int RPM, char currentMode, int32_t spindlePosition, int32_t feedRateControl){
-    //add in angle readout only in positioning mode
-  if (millis()%displayUpdateDelay == 0) {
+    //add in angle readout only in positioning mod
+
     lcd.setCursor(5, 1);
-    int dispRPM = RPM;
-    //1 digit
-    lcd.print(dispRPM);
+    
+    lcd.print(RPM);
     lcd.print("   ");
     switch(currentMode){
       case 'p':
@@ -27,7 +26,7 @@ void ControlPanel::updateRPM(int RPM, char currentMode, int32_t spindlePosition,
     
       
     }
-  }
+  
 }
 
 void ControlPanel::initHardware(){
@@ -99,13 +98,24 @@ void ControlPanel::updateFeedRate(int feedRatePercentage){
   
 }
 
-void ControlPanel::ModeControl(char currentMode, bool buttonPressed){
+void ControlPanel::ModeControl(char &currentMode){
     
     
-      if (buttonPressed) {
-        Serial.println(currentMode);
+     
+        //Serial.println(currentMode);
     // 0 == feed rate (mm/s), 1 == feed ratio (mm/rev), 2 == positioning, 3 == thread
-      switch(currentMode){
+      if(currentMode == 'f'){
+        currentMode = 't';
+        ControlPanel::setupFeedRatio();
+      }else if(currentMode == 't'){
+        currentMode = 'p';
+        ControlPanel::setupPositioning(0);
+      }
+      else if(currentMode == 'p'){
+        currentMode = 'f';
+        ControlPanel::setupFeedRate();
+      }
+      /* switch(currentMode){
       //THREAD CURRENTLY NOT SUPPORTED      
       //Currently in positioning, going to feed
       case 'p':
@@ -133,7 +143,7 @@ void ControlPanel::ModeControl(char currentMode, bool buttonPressed){
       default:
 
         break;
-    }
-  }
+    } */
+  
 
 }

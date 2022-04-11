@@ -34,7 +34,7 @@ public:
 
     void setupPositioning(int32_t spindlePosition);
 
-    void ModeControl(char currentMode, bool buttonPressed);
+    void ModeControl(char &currentMode);
 };
 
     

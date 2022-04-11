@@ -13,19 +13,19 @@
     //Teensy 3.2 TFM1 pins are 3,4.
 
 // ----- Control Encoder Pins OF SERIAL WOMBAT -----
-    #define clkPin 2
-    #define dtPin 3
+    #define clkPin 1
+    #define dtPin 2
 
 // ----- Button Pins OF SERIAL WOMBAT -----
-    #define modePin 1
+    #define modePin 3
 
 //Stepper constants
     #define stepsPerRev 400
     #define maxStepperRPM 1200
 
 //Encoder and RPM constants
-    #define encoderPulsesPerRev 400
-    #define RPMCalcRateHz 10
+    #define encoderPulsesPerRev 80
+    #define RPMCalcRateHz 2
 
 //Mechanical Constants
     //Pitch in mm on leadscrew
