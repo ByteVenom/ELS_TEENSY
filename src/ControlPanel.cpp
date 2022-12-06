@@ -11,21 +11,25 @@ void ControlPanel::updateRPM(int RPM, char currentMode, int32_t spindlePosition,
     
     lcd.print(RPM);
     lcd.print("   ");
-    switch(currentMode){
-      case 'p':
-      lcd.setCursor(6,2);
-      double encoderAngle =  (spindlePosition % encoderPulsesPerRev);
+   if(currentMode == 'p'){
+    lcd.setCursor(6,2);
+      double encoderAngle =  ((spindlePosition % encoderPulsesPerRev)/ (double) encoderPulsesPerRev) * 360;
       lcd.print( (double) encoderAngle);
-    break;
-    case 'f':
-    //Calculate current feed ratio based off rpm and commanded stepper RPM
+   }else if(currentMode == 'f'){
     double leadScrewRPMRatio = ((feedRateControl * maxStepperRPM)/2)/RPM;
     lcd.setCursor(0,3);
     lcd.print( (double) leadScrewRPMRatio);
-    break;
+   }
     
       
-    }
+     
+    //Calculate current feed ratio based off rpm and commanded stepper RPM
+   
+    
+    
+    
+      
+    
   
 }
 
@@ -54,14 +58,16 @@ void ControlPanel::setupFeedRate(){
   lcd.home();
   lcd.print("Feed       ");
   lcd.setCursor(0, 2);
-  lcd.print("mm/s: 0       ");
+  lcd.print("mm/s: 0.00    ");
 }
 
-void ControlPanel::setupFeedRatio(){
+void ControlPanel::setupFeedRatio(int feedRatio){
   lcd.home();
   lcd.print("Feed Ratio ");
   lcd.setCursor(0, 2);
-  lcd.print("Ratio:            ");
+  lcd.print("mm/rev: 0          ");
+  lcd.setCursor(8, 2);
+  lcd.print(feedRatio);
 }
 
 void ControlPanel::setupPositioning(int32_t spindlePosition){
@@ -69,81 +75,33 @@ void ControlPanel::setupPositioning(int32_t spindlePosition){
   lcd.print("Positioning  ");
   lcd.setCursor(0, 2);
   lcd.print("Angle:");
-  double spindleAngle =  (spindlePosition % encoderPulsesPerRev);
-  lcd.print( (double) spindleAngle);
+  double spindlePositionIntegral;
+  double spindlePositionFractional = modf( (double) spindlePosition/encoderPulsesPerRev, &spindlePositionIntegral );
+  double spindleAngle =  spindlePositionFractional * 360;
+  lcd.print( (double) spindleAngle, 5);
   lcd.setCursor(0,4);
   lcd.print("     ");
 
 }
 
-void ControlPanel::updateFeedRatio(int32_t spindlePosition, int feedRatio, int feedRatioControl){
-  lcd.setCursor(6, 2);
-  feedRatioControl = feedRatio / 100.0;
-  lcd.print((double)feedRatioControl);
-  lcd.print("  mm/rev ");
+void ControlPanel::updateFeedRatio(int pitchCounter ){
+  lcd.setCursor(8, 2);
+
+  lcd.print(pitches[pitchCounter]);
+  
   
 }
 
-void ControlPanel::updateFeedRate(int feedRatePercentage){
+void ControlPanel::updateFeedRate(float feedRate){
   
-  double feedRateControl = feedRatePercentage / 1600.0;
-  //mm/s takes 1mm pitch lead screw, which means 1 rpm = 1mm. 
+  //double displayFeedRate = ((feedRate / (double) feedRateRes) * maxStepperRPM * leadscrewPitch * leadscrewRatio) / 60.00;
+  //mm/s takes 1mm pitch lead screw, which means 1 rpm = 1mm.  
   //1rpm = 1/60 mm/s
   //Stepper to leadscrew ratio = .5
-  double displayFeedRate = feedRateControl*maxStepperRPM/120;
   //displayFeedRate = map(displayFeedRate,0, 100, 0, 600);
   lcd.setCursor(6, 2);
-  lcd.print((double)displayFeedRate);
+  lcd.print((double)feedRate);
   lcd.print(" ");
   
 }
 
-void ControlPanel::ModeControl(char &currentMode){
-    
-    
-     
-        //Serial.println(currentMode);
-    // 0 == feed rate (mm/s), 1 == feed ratio (mm/rev), 2 == positioning, 3 == thread
-      if(currentMode == 'f'){
-        currentMode = 't';
-        ControlPanel::setupFeedRatio();
-      }else if(currentMode == 't'){
-        currentMode = 'p';
-        ControlPanel::setupPositioning(0);
-      }
-      else if(currentMode == 'p'){
-        currentMode = 'f';
-        ControlPanel::setupFeedRate();
-      }
-      /* switch(currentMode){
-      //THREAD CURRENTLY NOT SUPPORTED      
-      //Currently in positioning, going to feed
-      case 'p':
-        currentMode = 'f';
-        ControlPanel::setupFeedRate();        
-       // stepperController.rotateAsync(stepper);
-      break;
-      //Currently in feed, going to feed ratio
-      case 'f':
-      currentMode = 't';
-      
-      //Stopping motor in order to have position control take over
-      //stepperController.stopAsync();
-      //stepper.setPosition(0);
-      break;
-      //Currently in feed ratio, going to positioning
-      case 't':
-      currentMode = 'p';
-      
-      //Stop stepper
-      //stepperController.overrideSpeed(0);
-      break;
-      
-     
-      default:
-
-        break;
-    } */
-  
-
-}

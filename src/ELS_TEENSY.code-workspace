@@ -1,0 +1,20 @@
+{
+	"folders": [
+		{
+			"path": "../../ELS_TEENSY"
+		},
+		{
+			"name": "220312-182514-teensy31",
+			"path": ".."
+		},
+		{
+			"name": "Test",
+			"path": "../../Test"
+		},
+		{
+			"name": "Carb_Synchronizer",
+			"path": "../../Carb_Synchronizer"
+		}
+	],
+	"settings": {}
+}

@@ -5,8 +5,8 @@
 #include <hd44780.h>  // main hd44780 header
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 #include "Config.h"
-#include <ezButton.h>
 #include <TeensyStep.h>
+#include "QuadDecode_def.h"
 
 //Feedmode is a char
 // 'f' feed 
@@ -26,15 +26,14 @@ public:
 
     void setupFeedRate(void);
 
-    void updateFeedRatio(int32_t spindlePosition, int feedRatio, int feedRatioControl);
+    void updateFeedRatio(int feedRatio);
 
-    void updateFeedRate(int feedRatePercentage);
+    void updateFeedRate(float feedRate);
 
-    void setupFeedRatio(void);
+    void setupFeedRatio(int feedRatio);
 
     void setupPositioning(int32_t spindlePosition);
 
-    void ModeControl(char &currentMode);
 };
 
     
