@@ -10,3 +10,5 @@ The Teensy has hardware encoder availailabilty via the QuadDecode classes: https
 The Teensy 3.2 has HW quadrature decoding on pins 2/3 for encoder A and pins 25/32 for encoder B.
 Currently, hardware decoding for the Teensy 4.0 would require usage of another library found here: https://forum.pjrc.com/threads/58478-Teensy-4-x-H-W-Quadrature-Encoder-Library
 The Teensy 4.0 has HW quadrature decoding on pins 0-5, 7, 30, 31 and 33. 
+
+More information on the Serial Wombat can be foudn here: https://www.serialwombat.com/
