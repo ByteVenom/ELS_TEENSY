@@ -1,7 +1,7 @@
 #include <Arduino.h>
 #include <stdint.h>
 
-#include "QuadDecode_def.h"
+#include "QuadEncoder.h"
 #include "Config.h"
 #include "ControlPanel.h"
 
@@ -39,7 +39,7 @@ double feedRateControl = 0;
 char currentMode;
 
 
-QuadDecode<1> spindleEncoder;
+QuadEncoder spindleEncoder(1, 3, 4);
 IntervalTimer rpmCalcTimer;
 IntervalTimer stepTimer;
 ControlPanel controlPanel;
@@ -80,8 +80,9 @@ void setup() {
   rpmCalcTimer.priority(200);
   currentMode = 'f';
   digitalWriteFast(directionPin, HIGH);
-  spindleEncoder.setup();
-  spindleEncoder.start();
+  spindleEncoder.setInitConfig();
+  spindleEncoder.init();
+  
 
   //Position
   spindlePosition = 0;
@@ -92,7 +93,7 @@ void setup() {
 }
 
 void loop() {
-    spindlePosition = spindleEncoder.calcPosn();
+    spindlePosition = spindleEncoder.read();
      deltaSpindlePosition = ( (spindlePosition) - (lastSpindlePosition));
      lastSpindlePosition = spindlePosition;
     if (abs(deltaSpindlePosition) > 0) {
@@ -106,13 +107,6 @@ void loop() {
         }
         stepTarget = abs((pitches[pitchCounter] * (double) stepsPerRev  *  ((deltaSpindlePosition/(double)encoderPulsesPerRev))/(  (double) leadscrewRatio *(double)leadscrewPitch)) );
         stepCount +=stepTarget;
-        //stepTarget = 1600;
-        //stepper.setTargetRel(deltaSpindlePosition * stepsPerRev);
-        //positionController.move(stepper);
-        //stepper.setPosition(0);
-        //stepper.setTargetRel(target * -1.00);
-        //positionController.move(stepper);
-        //Serial.println(stepTarget);
         
         stepTimer.begin(writeStep, pulseWidth);
         rpmCalcTimer.end(); 
@@ -128,7 +122,6 @@ void loop() {
     // 0 == feed rate (mm/s), 1 == feed ratio (mm/rev), 2 == positioning, 3 == thread
       if(currentMode == 'f'){
         currentMode = 't';
-         //stepperController.stopAsync();
         stopStepper();
         controlPanel.setupFeedRatio(pitches[pitchCounter]);
         
@@ -170,9 +163,6 @@ void loop() {
     }      
 
     if (currentMode == 't'){
-      //Serial.print("P");
-        //Max ratio will be set to 2x
-        //Stepper RPM will top out at 1200 RPM, so max spindle RPM for that would be 300 (because of 2/1 reduction)
         if (pitchCounter + deltaPos > 11) {
           pitchCounter = 11;
         } else if (pitchCounter + deltaPos < 0) {
@@ -223,7 +213,7 @@ void loop() {
 
 }
 void calcRPM() {
-  int32_t rpmCalc_currentPosition = spindleEncoder.calcPosn();
+  int32_t rpmCalc_currentPosition = spindleEncoder.read();
   int16_t rpmCalc_deltaPos = rpmCalc_currentPosition - rpmCalc_spindeLastPos;
   float percRot = ((rpmCalc_deltaPos) /(float) encoderPulsesPerRev);
   RPM =   abs(percRot * RPMCalcRateHz * 60.00);

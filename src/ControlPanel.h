@@ -5,8 +5,7 @@
 #include <hd44780.h>  // main hd44780 header
 #include <hd44780ioClass/hd44780_I2Cexp.h>
 #include "Config.h"
-#include <TeensyStep.h>
-#include "QuadDecode_def.h"
+#include "QuadEncoder.h"
 
 //Feedmode is a char
 // 'f' feed 
