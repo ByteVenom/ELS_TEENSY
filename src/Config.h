@@ -11,6 +11,8 @@
 
 // ----- Spindle Encoder Pins -----    
     //Teensy 3.2 TFM1 pins are 3,4.
+    #define SPINDLE_ENC_A 2
+    #define SPINDLE_ENC_B 3
 
 // ----- Control Encoder Pins OF SERIAL WOMBAT -----
     const short clkPin =  1;
@@ -22,19 +24,17 @@
 //Stepper constants
     #define stepsPerRev 10000
     #define maxStepperRPM 4000
-
+    #define minPulseWidth 5
 //Encoder and RPM constants
     #define encoderPulsesPerRev 400
-    #define RPMCalcRateHz 2
+    #define RPMCalcRateHz 4
 
 //Mechanical Constants
     //Pitch in mm on leadscrew
-    #define leadscrewPitch 1.5
+    #define leadscrewPitch 3.175
 
     //Ratio between stepper pulley and leadscrew. Ex Stepper pulley 20T, Leadscrew 40T: .5
     #define leadscrewRatio 0.5
-//Thread pithces
-    const double pitches[12] = {0, .4, .45, .5, .7, .8, 1.0, 1.25, 1.5, 1.75, 2, 2.5 };
 
 //LCD
     #define LCD_address 0x12

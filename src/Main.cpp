@@ -1,280 +1,394 @@
 #include <Arduino.h>
 #include <stdint.h>
-
-#include "QuadDecode_def.h"
+#include "ModeSC.h"
 #include "Config.h"
-#include "ControlPanel.h"
+#include "SerialTransfer.h"
+#include "QuadEncoder.h"
+#include "Wire.h"
 
-#include <SerialWombat.h>
+// MODE DEFINITIONS
+#define FEED 0x20
+#define FEED_DISTANCE 0x21
+#define THREAD 0x22
+#define THREAD_DISTANCE 0x23
+#define POSITION 0x24
+#define NUM_MODES 5
 
-//Control Encoder
+// Transmission commands
+#define RPM_TX 0x30
+#define MODE_CHANGE 0x31
+#define REVERSE_STEPPER 0X32
+#define STOP_STEPPER 0X33
+#define ENGAGE_MOVEMENT 0x34
+#define MOVEMENT_COMPLETE 0X35
+#define STEPPER_INMOTION 0x36
+#define CHANGE_FR 0x33
+#define CHANGE_TP 0x38
+#define CHANGE_DIST 0x39
+#define SPINDLE_POSITION_TX 0x40
+
+// Control Encoder
 uint16_t controlEncPos;
-//Hall Effect Sensor Settings
-bool hall = false; //Are we using hall effect (True) or quadrature encoder (false)
-int prevHallState = 0;
-int currentHallState = 0;
-//Spindle Encoder TimeKeepers
-long chALastRead;
+// Spindle Encoder TimeKeepers
 long rpmLastRead = 0;
-//Spindle RPMs
+// Spindle RPMs
 short RPMUpdateFreq = 10;
 volatile double RPM;
 double lastRPM;
-//Used for stepper calcs
+// Used for stepper calcs
 int32_t lastSpindlePosition = 0;
 int32_t deltaSpindlePosition;
 int32_t spindlePosition;
 bool printOUT = false;
-//LCD Setup
+// LCD Setup
 double feedRate = 0;
+double threadPitch = 0;
+double travelDistance = 0;
 int pitchCounter = 0;
 unsigned long rpmUpdateCounter = 0;
-unsigned long rpmUpdateDelay = (1.0/(RPMCalcRateHz)) * 1000000.0;
-//unsigned long rpmUpdateDelay = 5000000;
-//Lathe Functions
-//Spindle Ratio is the gear ratio between stepper and the lead screw.
-//Ratio control
-double feedRateControl = 0;
+unsigned long rpmUpdateDelay = (1.0 / (RPMCalcRateHz)) * 1000000.0;
+// unsigned long rpmUpdateDelay = 5000000;
+// Lathe Functions
+// Spindle Ratio is the gear ratio between stepper and the lead screw.
+// Ratio control
 
+mode modes[NUM_MODES];
 char currentMode;
+struct __attribute__((packed)) STRUCT_3
+{
+  uint8_t command;
+  double data;
+} dataTransmission;
 
-
-QuadDecode<1> spindleEncoder;
+QuadEncoder spindleEncoder(1, SPINDLE_ENC_A, SPINDLE_ENC_B, 0);
+IntervalTimer posTXTimer;
 IntervalTimer rpmCalcTimer;
 IntervalTimer stepTimer;
-ControlPanel controlPanel;
-// Encoder Setup
-// Create a new instance of the AccelSteppe
-
-SerialWombat controlPanelIOExpander;
-SerialWombatDebouncedInput modeButton(controlPanelIOExpander);
-SerialWombatQuadEnc controlEncoder(controlPanelIOExpander);
+SerialTransfer latheBus;
 
 volatile bool calcRPMReady = false;
+volatile bool txSpindleReady = false;
 uint16_t rpmCalc_spindeLastPos;
 uint16_t stepCount = 0;
 volatile bool stepPinState = false;
 uint32_t stepTarget = 0;
-int pulseWidth =10;
+int pulseWidth = 10;
+u_int32_t distanceStepTarget = 0;
+uint32_t distanceStepCount = 0;
+bool clearToMove = false;
+bool stepperIsRunning = false;
+bool reverse = false;
 
 void calcRPM();
 void writeStep();
 void writeStepRPM();
 void stopStepper();
+void receiveControlPanelData();
+mode findModeOffID(uint8_t modeID);
+void setupModes();
+void transmitDataToControlPanel();
+void receiveControlPanelCmd();
+void transmitControlPanelCmd(uint8_t cmd, double data);
+void transmitSpindlePos();
 
-
-void setup() {
+void setup()
+{
   // Set the maximum speed and acceleration:
-  //Stepper pin modes
+  // Stepper pin modes
   pinMode(directionPin, OUTPUT);
   pinMode(stepPulsePin, OUTPUT);
   pinMode(6, OUTPUT);
 
-   Wire.begin();
-   controlPanelIOExpander.begin(0x6C);
-  modeButton.begin(modePin, 400, true, true);
-  controlEncoder.begin(clkPin, dtPin,10,true, QE_ONHIGH_POLL);
-      digitalWrite(6, HIGH);
-  controlPanel.initHardware();
+  Serial1.begin(57600);
+  configST latheBusConfig;
+  latheBusConfig.debug = false;
+  latheBus.begin(Serial1);
+  digitalWrite(6, HIGH);
+
   rpmCalcTimer.begin(calcRPM, rpmUpdateDelay);
   rpmCalcTimer.priority(200);
-  currentMode = 'f';
+  currentMode = FEED;
   digitalWriteFast(directionPin, HIGH);
-  spindleEncoder.setup();
-  spindleEncoder.start();
+  spindleEncoder.setInitConfig();
+  spindleEncoder.init();
 
-  //Position
+  // Position
   spindlePosition = 0;
   lastSpindlePosition = 0;
-
-   
- controlEncoder.write(0);
 }
 
-void loop() {
-    spindlePosition = spindleEncoder.calcPosn();
-     deltaSpindlePosition = ( (spindlePosition) - (lastSpindlePosition));
-     lastSpindlePosition = spindlePosition;
-    if (abs(deltaSpindlePosition) > 0) {
-      
-      if(currentMode == 't'){
-        //lead screw moves 1.5mm per rotation
-        if(deltaSpindlePosition < 0){
-          digitalWriteFast(directionPin, HIGH);
-        }else if(deltaSpindlePosition > 0){
-          digitalWriteFast(directionPin, LOW);
-        }
-        stepTarget = abs((pitches[pitchCounter] * (double) stepsPerRev  *  ((deltaSpindlePosition/(double)encoderPulsesPerRev))/(  (double) leadscrewRatio *(double)leadscrewPitch)) );
-        stepCount +=stepTarget;
-        //stepTarget = 1600;
-        //stepper.setTargetRel(deltaSpindlePosition * stepsPerRev);
-        //positionController.move(stepper);
-        //stepper.setPosition(0);
-        //stepper.setTargetRel(target * -1.00);
-        //positionController.move(stepper);
-        //Serial.println(stepTarget);
-        
-        stepTimer.begin(writeStep, pulseWidth);
-        rpmCalcTimer.end(); 
-        
+void loop()
+{
+  spindlePosition = spindleEncoder.read();
+  deltaSpindlePosition = ((spindlePosition) - (lastSpindlePosition));
+  lastSpindlePosition = spindlePosition;
+  if (abs(deltaSpindlePosition) > 0)
+  {
 
-      }
-    }
- // }
-
-  //Handle buttons
-  if(modeButton.digitalRead() && modeButton.readDurationInTrueState_mS() <= 15){
-       //Serial.println(currentMode);
-    // 0 == feed rate (mm/s), 1 == feed ratio (mm/rev), 2 == positioning, 3 == thread
-      if(currentMode == 'f'){
-        currentMode = 't';
-         //stepperController.stopAsync();
-        stopStepper();
-        controlPanel.setupFeedRatio(pitches[pitchCounter]);
-        
-      }else if(currentMode == 't'){
-        currentMode = 'p';
-        controlPanel.setupPositioning(0);
-      }
-      else if(currentMode == 'p'){
-        currentMode = 'f';
-        //End threading step timer in case its still running
-        stepTimer.end();
+    if (currentMode == THREAD || (currentMode == THREAD_DISTANCE && clearToMove))
+    {
+      // lead screw moves 1.5mm per rotation
+      if (deltaSpindlePosition < 0)
+      {
         digitalWriteFast(directionPin, HIGH);
-        feedRate = 0;
-        controlPanel.setupFeedRate();
       }
-  }
-  
-  //Check control encoder direction
-  u_int32_t newPos = 0;
-  int_fast16_t deltaPos = 0;
-  uint32_t controlEncNewPos = 0;
-  //Only poll encoder if threading stepper is not currently stepping;
-  if(stepCount <= 0){
-    newPos = controlEncoder.read();
-    deltaPos = (newPos - controlEncPos);
-    controlEncNewPos = newPos != controlEncPos;
-    controlEncPos = newPos;
-  }
-  
-  
+      else if (deltaSpindlePosition > 0)
+      {
+        digitalWriteFast(directionPin, LOW);
+      }
+      stepTarget = abs((threadPitch * (double)stepsPerRev * ((deltaSpindlePosition / (double)encoderPulsesPerRev)) / ((double)leadscrewRatio * (double)leadscrewPitch)));
+      stepCount += stepTarget;
 
-  //Control encoder motion
-
-  if (controlEncNewPos) {
-         //Feed ratio
-         //Serial.println(newPos);
-    if(deltaPos >= 400){
-          deltaPos = 0;
-    }      
-
-    if (currentMode == 't'){
-      //Serial.print("P");
-        //Max ratio will be set to 2x
-        //Stepper RPM will top out at 1200 RPM, so max spindle RPM for that would be 300 (because of 2/1 reduction)
-        if (pitchCounter + deltaPos > 11) {
-          pitchCounter = 11;
-        } else if (pitchCounter + deltaPos < 0) {
-          pitchCounter = 0;
-        } else {
-          pitchCounter += deltaPos;
-        }
-        controlPanel.updateFeedRatio(pitchCounter);
-        
-        
-
-    }else if (currentMode == 'f'){
-      //Feed rate
-      //Feed rate percentage is a 0-100 number for speed factor control. 
-
-      //Since the serial wombat overflows to 65535 when we try to go below 0, our delta pos would be much greater than anything we'd normally see. 
-      //Thus to prevent the speed from going to max, we set it to 0. 
-        
-        //A delta pos >4 means that the user is spinning the knob quite quickly. This aids in some acceleration;
-        float deltaPosDec = ((double) deltaPos) * feedRateRes;
-        if(abs(deltaPosDec) > .3){
-          deltaPosDec = deltaPosDec * 2;
-        }
-        if (feedRate + deltaPosDec > maxFeedRate) {
-          feedRate = 0;
-          stopStepper();
-        } else if (feedRate + deltaPosDec <= 0) {
-          feedRate = 0;
-          stopStepper();
-        } else {
-          feedRate += deltaPosDec;
-          //Ex target RPM for 1mm/s = 80 ==> 0.000075 S = 75 us. 13khz
-          int_fast16_t feedRateInterruptTime = 1000000.000000 * ((leadscrewPitch* (double) leadscrewRatio)/(feedRate*2*(double) stepsPerRev));
-          stepTimer.begin(writeStepRPM, feedRateInterruptTime);
-          stepPinState = false;
-          
-        }  
-        controlPanel.updateFeedRate(feedRate);              
-        
+      stepTimer.begin(writeStep, pulseWidth);
+      rpmCalcTimer.end();
     }
   }
-  if(calcRPMReady){
-    controlPanel.updateRPM(RPM, currentMode, spindlePosition, feedRateControl);
-    //Serial.println("update)");
+  if (calcRPMReady)
+  {
+    // controlPanelData.RPM = RPM;
+    transmitControlPanelCmd(RPM_TX, RPM);
     calcRPMReady = false;
   }
-  
-
+  if (txSpindleReady && currentMode == POSITION)
+  {
+    double angularPos = (spindlePosition / encoderPulsesPerRev) * 360.00;
+    transmitControlPanelCmd(SPINDLE_POSITION_TX, angularPos);
+    txSpindleReady = false;
+  }
+  // receiveControlPanelData();
+  receiveControlPanelCmd();
 }
-void calcRPM() {
-  int32_t rpmCalc_currentPosition = spindleEncoder.calcPosn();
+void calcRPM()
+{
+  int32_t rpmCalc_currentPosition = spindleEncoder.read();
   int16_t rpmCalc_deltaPos = rpmCalc_currentPosition - rpmCalc_spindeLastPos;
-  float percRot = ((rpmCalc_deltaPos) /(float) encoderPulsesPerRev);
-  RPM =   abs(percRot * RPMCalcRateHz * 60.00);
+  float percRot = ((rpmCalc_deltaPos) / (float)encoderPulsesPerRev);
+  RPM = abs(percRot * RPMCalcRateHz * 60.00);
   rpmCalc_spindeLastPos = rpmCalc_currentPosition;
   calcRPMReady = true;
-  
-  
+}
+void transmitSpindlePos()
+{
+  txSpindleReady = true;
 }
 
-int avgArray(double avgArray[], int maxCount) {
-  int sum = 0;
-  for (int i = 0; i < maxCount; i++) {
-    sum += avgArray[i];
-  }
-  return sum / maxCount;
-}
-void writeStep(){
-  if(stepCount == 0){
+void writeStep()
+{
+  if (stepCount <= 0 || (distanceStepCount >= distanceStepTarget && (currentMode == THREAD_DISTANCE || currentMode == FEED_DISTANCE)))
+  {
     stepTimer.end();
+    stopStepper();
+    // controlPanelData.movementCompleted = true;
     rpmCalcTimer.begin(calcRPM, rpmUpdateDelay);
     return;
   }
-  if(stepPinState == false){
+  if (stepPinState == false)
+  {
     digitalWriteFast(stepPulsePin, HIGH);
     stepPinState = true;
-    
-  }else{
+  }
+  else
+  {
     digitalWriteFast(stepPulsePin, LOW);
     stepPinState = false;
     stepCount--;
+    distanceStepCount++;
   }
-  
 }
-void writeStepRPM(){
-  if(currentMode == 'f'){ 
-    if(stepPinState == false){
+void writeStepRPM()
+{
+  if (currentMode == FEED || (currentMode == FEED_DISTANCE && distanceStepTarget <= distanceStepCount))
+  {
+    if (stepPinState == false)
+    {
       digitalWriteFast(stepPulsePin, HIGH);
-      
       stepPinState = true;
-    
-    }else{
+      distanceStepCount++;
+    }
+    else
+    {
       digitalWriteFast(stepPulsePin, LOW);
       stepPinState = false;
     }
-  }else{
+  }
+  else
+  {
     stopStepper();
+    distanceStepCount = 0;
   }
 }
-void stopStepper(){
+void stopStepper()
+{
+  stepCount = 0;
+  distanceStepCount = 0;
   stepTimer.end();
+  clearToMove = false;
+  stepperIsRunning = false;
+  // controlPanelData.inMovement = false;
   digitalWriteFast(stepPulsePin, LOW);
+  transmitControlPanelCmd(MOVEMENT_COMPLETE, 0x00);
 }
+/* void receiveControlPanelData(){
+  if(latheBus.available()){
+    latheBus.rxObj(stepperControllerData);
+    if(currentMode != stepperControllerData.controlMode){
+      //Figure out what we want to do
+      currentMode = stepperControllerData.controlMode;
+      Serial.printf("Current mode is now %i", currentMode);
+      stopStepper();
+    }
+    if(!stepperIsRunning){
+      if(stepperControllerData.reverse != reverse){
+        digitalWriteFast(directionPin, stepperControllerData.reverse);
+        reverse = stepperControllerData.reverse;
+        Serial.println("Stepper is now reversing direction");
+      }
+    }else if(stepperIsRunning && stepperControllerData.reverse != reverse){
+        Serial.println("Cannot reverse stepper while moving");
+    }
+    if(stepperIsRunning && stepperControllerData.stopStepper){
+      stopStepper();
+      Serial.println("Commanded stop");
+    }
+    if(currentMode == FEED_DISTANCE || currentMode == THREAD_DISTANCE){
+      if(stepperControllerData.engageMovement){
+        if(RPM > 0){
+          distanceStepTarget = stepperControllerData.distanceToMove * (1/leadscrewPitch) * (1/leadscrewRatio) * stepsPerRev;
+          controlPanelData.inMovement = true;
+          transmitDataToControlPanel();
+          clearToMove = true;
+          Serial.printf("Stepper will now move %d mm \n", stepperControllerData.distanceToMove);
 
+        }
+      }
+    }
+    if(currentMode == FEED){
+      if(stepperControllerData.stepperFeedRate != 0 && stepperControllerData.stepperFeedRate != feedRate){
+        feedRate = stepperControllerData.stepperFeedRate;
+        uint32_t timeBetweenSteps = 1000000/((stepperControllerData.stepperFeedRate/leadscrewPitch) * (1/leadscrewRatio) * (double) stepsPerRev);
+        stepTimer.begin(writeStepRPM, timeBetweenSteps);
+        Serial.printf("Stepper is now running at: %d \n", timeBetweenSteps );
+        stepperIsRunning = true;
+        controlPanelData.inMovement = true;
+      }else{
+        stopStepper();
+      }
+    }
+    feedRate = stepperControllerData.stepperFeedRate;
+  }
+} */
+void receiveControlPanelCmd()
+{
+  if (latheBus.available())
+  {
+    latheBus.rxObj(dataTransmission);
+    switch (dataTransmission.command)
 
+    {
+    case MODE_CHANGE:
+
+      currentMode = dataTransmission.data;
+
+      if (currentMode == POSITION)
+      {
+        posTXTimer.begin(transmitSpindlePos, rpmUpdateDelay);
+        posTXTimer.priority(200);
+      }
+      else
+      {
+        posTXTimer.end();
+      }
+      // Serial.printf("Current mode is now %i", currentMode);
+      break;
+    case REVERSE_STEPPER:
+      if (stepperIsRunning)
+      {
+        stopStepper();
+      }
+      digitalWriteFast(directionPin, !reverse);
+      reverse = !reverse;
+      // Serial.println("Stepper will stop and will be set to reverse");
+
+      break;
+    /* case STOP_STEPPER:
+      stopStepper();
+      break; */
+    case ENGAGE_MOVEMENT:
+      if (RPM > 0 && (currentMode == FEED_DISTANCE || currentMode == THREAD_DISTANCE))
+      {
+        distanceStepTarget = dataTransmission.data * (1 / leadscrewPitch) * (1 / leadscrewRatio) * stepsPerRev;
+        distanceStepCount = 0;
+        // controlPanelData.inMovement = true;
+        transmitControlPanelCmd(STEPPER_INMOTION, 0x00);
+        clearToMove = true;
+        // Serial.printf("Stepper will now move %d mm \n", dataTransmission.data);
+      }
+      break;
+    case CHANGE_FR:
+      if (dataTransmission.data != 0 && dataTransmission.data != feedRate && (currentMode == FEED || currentMode == FEED_DISTANCE))
+      {
+        feedRate = dataTransmission.data;
+        if (feedRate < 0)
+        {
+          feedRate = 0;
+          break;
+        }
+        uint32_t timeBetweenSteps = 1000000 / ((dataTransmission.data / leadscrewPitch) * (1 / leadscrewRatio) * (double)stepsPerRev);
+        if (timeBetweenSteps < minPulseWidth)
+        {
+          timeBetweenSteps = minPulseWidth;
+        }
+        Serial.printf("Stepper is now running at: %lf \n", dataTransmission.data );
+        if (currentMode == FEED)
+        {
+          stepTimer.begin(writeStepRPM, timeBetweenSteps);
+          stepperIsRunning = true;
+          transmitControlPanelCmd(STEPPER_INMOTION, 0x00);
+        }
+          
+         
+
+        // TRANSMIT OUT THAT STEPPER IS IN MOVEMENT
+      }
+      break;
+    case CHANGE_TP:
+      if (dataTransmission.data != threadPitch && (currentMode == THREAD || currentMode == THREAD_DISTANCE))
+      {
+        threadPitch = dataTransmission.data;
+         Serial.printf("Stepper is set to thread: %lf \n", threadPitch );
+      }
+      break;
+    case CHANGE_DIST:
+      if ((currentMode == THREAD_DISTANCE || currentMode == FEED_DISTANCE) && travelDistance == 0)
+      {
+        travelDistance = dataTransmission.data;
+        // Serial.printf("Stepper is set to move: %lf \n", travelDistance );
+      }
+      break;
+    default:
+      break;
+    }
+  }
+}
+// Send out completed acks and then negate them
+/* void transmitDataToControlPanel(){
+  latheBus.sendDatum(controlPanelData);
+
+  if(controlPanelData.movementCompleted){
+    controlPanelData.movementCompleted = false;
+  }
+} */
+void transmitControlPanelCmd(uint8_t cmd, double data)
+{
+  dataTransmission.command = cmd;
+  dataTransmission.data = data;
+  latheBus.sendDatum(dataTransmission);
+}
+void setupModes()
+{
+  modes[0] = mode(FEED, false);
+  modes[1] = mode(FEED_DISTANCE, true);
+  modes[2] = mode(THREAD, false);
+  modes[3] = mode(THREAD_DISTANCE, true);
+  modes[4] = mode(POSITION, false);
+}
