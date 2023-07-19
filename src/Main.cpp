@@ -228,55 +228,7 @@ void stopStepper()
   digitalWriteFast(stepPulsePin, LOW);
   transmitControlPanelCmd(MOVEMENT_COMPLETE, 0x00);
 }
-/* void receiveControlPanelData(){
-  if(latheBus.available()){
-    latheBus.rxObj(stepperControllerData);
-    if(currentMode != stepperControllerData.controlMode){
-      //Figure out what we want to do
-      currentMode = stepperControllerData.controlMode;
-      Serial.printf("Current mode is now %i", currentMode);
-      stopStepper();
-    }
-    if(!stepperIsRunning){
-      if(stepperControllerData.reverse != reverse){
-        digitalWriteFast(directionPin, stepperControllerData.reverse);
-        reverse = stepperControllerData.reverse;
-        Serial.println("Stepper is now reversing direction");
-      }
-    }else if(stepperIsRunning && stepperControllerData.reverse != reverse){
-        Serial.println("Cannot reverse stepper while moving");
-    }
-    if(stepperIsRunning && stepperControllerData.stopStepper){
-      stopStepper();
-      Serial.println("Commanded stop");
-    }
-    if(currentMode == FEED_DISTANCE || currentMode == THREAD_DISTANCE){
-      if(stepperControllerData.engageMovement){
-        if(RPM > 0){
-          distanceStepTarget = stepperControllerData.distanceToMove * (1/leadscrewPitch) * (1/leadscrewRatio) * stepsPerRev;
-          controlPanelData.inMovement = true;
-          transmitDataToControlPanel();
-          clearToMove = true;
-          Serial.printf("Stepper will now move %d mm \n", stepperControllerData.distanceToMove);
 
-        }
-      }
-    }
-    if(currentMode == FEED){
-      if(stepperControllerData.stepperFeedRate != 0 && stepperControllerData.stepperFeedRate != feedRate){
-        feedRate = stepperControllerData.stepperFeedRate;
-        uint32_t timeBetweenSteps = 1000000/((stepperControllerData.stepperFeedRate/leadscrewPitch) * (1/leadscrewRatio) * (double) stepsPerRev);
-        stepTimer.begin(writeStepRPM, timeBetweenSteps);
-        Serial.printf("Stepper is now running at: %d \n", timeBetweenSteps );
-        stepperIsRunning = true;
-        controlPanelData.inMovement = true;
-      }else{
-        stopStepper();
-      }
-    }
-    feedRate = stepperControllerData.stepperFeedRate;
-  }
-} */
 void receiveControlPanelCmd()
 {
   if (latheBus.available())
@@ -304,6 +256,7 @@ void receiveControlPanelCmd()
       if (stepperIsRunning)
       {
         stopStepper();
+        
       }
       digitalWriteFast(directionPin, !reverse);
       reverse = !reverse;
@@ -318,7 +271,6 @@ void receiveControlPanelCmd()
       {
         distanceStepTarget = dataTransmission.data * (1 / leadscrewPitch) * (1 / leadscrewRatio) * stepsPerRev;
         distanceStepCount = 0;
-        // controlPanelData.inMovement = true;
         transmitControlPanelCmd(STEPPER_INMOTION, 0x00);
         clearToMove = true;
         // Serial.printf("Stepper will now move %d mm \n", dataTransmission.data);
